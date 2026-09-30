@@ -1,8 +1,40 @@
+# Dependências instaladas localmente
 node_modules/
+
+# Variáveis e segredos locais
+.env
+.env.*
+!.env.example
+
+# Bancos SQLite e arquivos auxiliares gerados em execução/testes
 database/*.db
 database/*.db-journal
+database/*.db-shm
+database/*.db-wal
+
+# Uploads gerados pela aplicação
 uploads/*
 !uploads/.gitkeep
-.env
-.DS_Store
+
+# Saídas de build, cobertura e caches
+dist/
+build/
+coverage/
+.cache/
+.tmp/
+tmp/
+*.tsbuildinfo
+
+# Logs e relatórios locais de gerenciadores de pacotes
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Configurações locais de editores e sistemas operacionais
 .vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
