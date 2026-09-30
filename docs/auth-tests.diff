@@ -1,0 +1,110 @@
+diff --git a/tests/api.smoke.test.ts b/tests/api.smoke.test.ts
+index e18dd28..44cb519 100644
+--- a/tests/api.smoke.test.ts
++++ b/tests/api.smoke.test.ts
+@@ -14,15 +14,37 @@
+ import { test, before, after } from "node:test";
+ import assert from "node:assert/strict";
+ import type { Server } from "node:http";
++import { randomBytes } from "node:crypto";
+ import { startServer, jsonRequest, randomCns } from "./helpers";
+ 
+ let base = "";
+ let server: Server;
+ let api: ReturnType<typeof jsonRequest>;
++let authorization: { Authorization: string };
++let ownedEncounterId: number;
+ 
+ before(async () => {
+   ({ base, server } = await startServer());
+   api = jsonRequest(base);
++  const credentials = {
++    name: "Profissional Smoke",
++    email: `smoke.${randomBytes(8).toString("hex")}@teste.local`,
++    password: randomBytes(24).toString("hex"),
++    role: "profissional",
++  };
++  await api("/api/auth/register", { method: "POST", body: JSON.stringify(credentials) });
++  const login = await api("/api/auth/login", { method: "POST", body: JSON.stringify(credentials) });
++  const { token } = await login.json() as { token: string };
++  authorization = { Authorization: `Bearer ${token}` };
++  const unauthenticatedApi = api;
++  api = (path, options = {}) => unauthenticatedApi(path, {
++    ...options, headers: { ...authorization, ...options.headers },
++  });
++  const ownedEncounter = await api("/api/patients/1/encounters", {
++    method: "POST",
++    body: JSON.stringify({ startedAt: "2026-09-01T09:00", chiefComplaint: "Preparo do smoke" }),
++  });
++  ownedEncounterId = ((await ownedEncounter.json()) as { id: number }).id;
+ });
+ 
+ after(() => server.close());
+@@ -100,21 +122,21 @@ test("Encounters: lista do seed e criação -> 200/201; paciente fantasma -> 404
+ });
+ 
+ test("Medications: lista e criação aninhadas no encounter -> 200/201; encounter fantasma -> 404", async () => {
+-  const list = await api("/api/encounters/1/medications");
++  const list = await api(`/api/encounters/${ownedEncounterId}/medications`);
+   assert.equal(list.status, 200);
+ 
+-  const created = await api("/api/encounters/1/medications", {
++  const created = await api(`/api/encounters/${ownedEncounterId}/medications`, {
+     method: "POST",
+     body: JSON.stringify({ medication: "Paracetamol 750mg", dosage: "1 comprimido de 8/8h por 2 dias" }),
+   });
+   assert.equal(created.status, 201);
+   const med = (await created.json()) as { encounterId: number };
+-  assert.equal(med.encounterId, 1);
++  assert.equal(med.encounterId, ownedEncounterId);
+ 
+   const ghost = await api("/api/encounters/999999/medications");
+   assert.equal(ghost.status, 404);
+ 
+-  const invalid = await api("/api/encounters/1/medications", {
++  const invalid = await api(`/api/encounters/${ownedEncounterId}/medications`, {
+     method: "POST",
+     body: JSON.stringify({ medication: "" }),
+   });
+@@ -130,19 +152,19 @@ test("Upload: PNG pequeno -> 200 com photoUrl; sem arquivo -> 422", async () =>
+   const form = new FormData();
+   form.append("photo", new Blob([png], { type: "image/png" }), "pixel.png");
+ 
+-  const ok = await fetch(`${base}/api/patients/2/photo`, { method: "POST", body: form });
++  const ok = await fetch(`${base}/api/patients/2/photo`, { method: "POST", headers: authorization, body: form });
+   assert.equal(ok.status, 200);
+   const patient = (await ok.json()) as { photoUrl: string };
+   assert.match(patient.photoUrl, /^\/uploads\/.+\.png$/);
+   assert.ok(!patient.photoUrl.includes("pixel"), "nome do cliente não pode ser reaproveitado");
+ 
+-  const empty = await fetch(`${base}/api/patients/2/photo`, { method: "POST", body: new FormData() });
++  const empty = await fetch(`${base}/api/patients/2/photo`, { method: "POST", headers: authorization, body: new FormData() });
+   assert.equal(empty.status, 422);
+ });
+ 
+ test("Upload: mimetype proibido -> 422 mesmo com extensão .jpg (filtro por conteúdo declarado)", async () => {
+   const form = new FormData();
+   form.append("photo", new Blob(["não sou uma imagem"], { type: "text/plain" }), "disfarce.jpg");
+-  const res = await fetch(`${base}/api/patients/2/photo`, { method: "POST", body: form });
++  const res = await fetch(`${base}/api/patients/2/photo`, { method: "POST", headers: authorization, body: form });
+   assert.equal(res.status, 422);
+ });
+diff --git a/tests/auth.attacks.test.ts b/tests/auth.attacks.test.ts
+index 5daa413..17c5311 100644
+--- a/tests/auth.attacks.test.ts
++++ b/tests/auth.attacks.test.ts
+@@ -48,7 +48,13 @@ before(async () => {
+ after(() => server.close());
+ 
+ function quandoAuthExistir(name: string, fn: () => Promise<void>) {
+-  test(name, { skip: !authPronta ? "trilha AUTH ainda não implementada" : false }, fn);
++  test(name, async (context) => {
++    if (!authPronta) {
++      context.skip("trilha AUTH ainda não implementada");
++      return;
++    }
++    await fn();
++  });
+ }
+ 
+ async function login(credentials: { email: string; password: string }): Promise<string> {
